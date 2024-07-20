@@ -32,7 +32,7 @@ jobs:
       - name: Build frontend
         working-directory: ./web
         run: |
-          yarn --frozen-lockfile --production=false
+          npm install --frozen-lockfile --production=false
           npm run build
           
 
