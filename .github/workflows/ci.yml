@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: "yarn"
-          ache-dependency-path: "web/yarn.lock"
+          cache-dependency-path: "web/yarn.lock"
 
       - name: Build frontend
         working-directory: ./web
