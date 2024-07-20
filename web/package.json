@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "env && /home/runner/work/pkappa2/pkappa2/web/node_modules/.bin/vite build",
+    "build": "env && vite build",
     "serve": "vite preview",
     "lint": "eslint --ext .js,.ts,.vue --fix .",
     "format": "prettier --check --write .",
