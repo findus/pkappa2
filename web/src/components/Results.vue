@@ -84,6 +84,14 @@
           </v-list>
         </v-menu>
       </div>
+      <v-alert
+        v-if="streams.outdated"
+        class="toolbar-alert"
+        type="info"
+        outlined
+        dense
+        >Results might be outdated.</v-alert
+      >
       <v-spacer />
       <div
         v-if="
@@ -116,7 +124,7 @@
                   name: 'search',
                   query: {
                     q: $route.query.q,
-                    p: (+$route.query.p - 1).toString(),
+                    p: (Number($route.query.p ?? 0) - 1).toString(),
                   },
                 })
               "
@@ -138,7 +146,7 @@
                   name: 'search',
                   query: {
                     q: $route.query.q,
-                    p: (+$route.query.p + 1).toString(),
+                    p: (Number($route.query.p ?? 0) + 1).toString(),
                   },
                 })
               "
@@ -438,3 +446,8 @@ function regexEscape(text: string) {
     .join("");
 }
 </script>
+<style scoped>
+.toolbar-alert {
+  margin: 0px;
+}
+</style>

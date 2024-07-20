@@ -42,7 +42,7 @@ const (
 )
 
 var (
-	baseDir      = flag.String("base_dir", "/tmp", "All paths are relative to this path")
+	baseDir      = flag.String("base_dir", os.TempDir(), "All paths are relative to this path")
 	pcapDir      = flag.String("pcap_dir", "", "Path where pcaps will be stored")
 	indexDir     = flag.String("index_dir", "", "Path where indexes will be stored")
 	snapshotDir  = flag.String("snapshot_dir", "", "Path where snapshots will be stored")
@@ -135,7 +135,7 @@ func main() {
 
 		dst, err := os.OpenFile(fullFilename, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 		if err != nil {
-			http.Error(w, "File already exists", http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("File already exists: %v", err), http.StatusInternalServerError)
 			return
 		}
 
@@ -809,6 +809,35 @@ func main() {
 		}
 	})
 	rUser.Get("/*", http.FileServer(http.FS(&web.FS{})).ServeHTTP)
+	rUser.Get("/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(mgr.ListPcapProcessorWebhooks()); err != nil {
+			http.Error(w, fmt.Sprintf("Encode failed: %v", err), http.StatusInternalServerError)
+		}
+	})
+	rUser.Delete("/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.Query()["url"]
+		if len(u) != 1 || u[0] == "" {
+			http.Error(w, "`url` parameter missing", http.StatusBadRequest)
+			return
+		}
+		if err := mgr.DelPcapProcessorWebhook(u[0]); err != nil {
+			http.Error(w, fmt.Sprintf("delete failed: %v", err), http.StatusBadRequest)
+			return
+		}
+	})
+	rUser.Put("/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.Query()["url"]
+		if len(u) != 1 || u[0] == "" {
+			http.Error(w, "`url` parameter missing or empty", http.StatusBadRequest)
+			return
+		}
+		if err := mgr.AddPcapProcessorWebhook(u[0]); err != nil {
+			http.Error(w, fmt.Sprintf("add failed: %v", err), http.StatusBadRequest)
+			return
+		}
+	})
 	rUser.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		c, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 		if err != nil {

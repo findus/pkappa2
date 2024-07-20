@@ -1,9 +1,59 @@
-import { TagInfo } from "@/apiClient";
+import { ConverterStatistics, TagInfo } from "@/apiClient";
 import { useRootStore } from ".";
+import { useStreamStore } from "./stream";
+import { useStreamsStore } from "./streams";
+import {
+  isConverterEvent,
+  isEvent,
+  isPcapProcessedEvent,
+  isTagEvent,
+} from "./websocket.guard";
 
-type Event = {
-  Type: string;
-  Tag: TagInfo | null;
+type EventTypes =
+  | "converterCompleted"
+  | "converterDeleted"
+  | "converterAdded"
+  | "converterRestarted"
+  | "indexesMerged"
+  | "pcapArrived"
+  | "pcapProcessed"
+  | "tagAdded"
+  | "tagDeleted"
+  | "tagUpdated"
+  | "tagEvaluated";
+
+/** @see {isEvent} ts-auto-guard:type-guard */
+export type Event = {
+  Type: EventTypes | string;
+};
+
+/** @see {isTagEvent} ts-auto-guard:type-guard */
+export type TagEvent = {
+  Type: "tagAdded" | "tagDeleted" | "tagUpdated" | "tagEvaluated";
+  Tag: TagInfo;
+};
+
+/** @see {isConverterEvent} ts-auto-guard:type-guard */
+export type ConverterEvent = {
+  Type:
+    | "converterCompleted"
+    | "converterDeleted"
+    | "converterAdded"
+    | "converterRestarted";
+  Converter: ConverterStatistics;
+};
+
+export type PcapStats = {
+  PcapCount: number;
+  ImportJobCount: number;
+  StreamCount: number;
+  PacketCount: number;
+};
+
+/** @see {isPcapProcessedEvent} ts-auto-guard:type-guard */
+export type PcapProcessedEvent = {
+  Type: "pcapProcessed";
+  PcapStats: PcapStats;
 };
 
 export function setupWebsocket() {
@@ -34,22 +84,103 @@ export function setupWebsocket() {
       }, reconnectTimeout);
     };
     ws.onmessage = (event) => {
+      if (typeof event.data !== "string") return;
       const store = useRootStore();
-      const e: Event = JSON.parse(event.data as string) as Event;
+      const streamStore = useStreamStore();
+      const streamsStore = useStreamsStore();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const e = JSON.parse(event.data);
+      if (!isEvent(e)) {
+        console.error("Invalid event:", event.data);
+        return;
+      }
       switch (e.Type) {
         case "tagAdded":
-          if (store.tags != null) store.tags.push(e.Tag!);
+          if (!isTagEvent(e)) {
+            console.error("Invalid tag event:", e);
+            return;
+          }
+          if (
+            store.tags != null &&
+            !store.tags.find((tag) => tag.Name == e.Tag.Name)
+          )
+            store.tags.push(e.Tag);
           break;
         case "tagDeleted":
+          if (!isTagEvent(e)) {
+            console.error("Invalid tag event:", e);
+            return;
+          }
           if (store.tags != null)
-            store.tags = store.tags.filter((tag) => tag.Name != e.Tag?.Name);
+            store.tags = store.tags.filter((tag) => tag.Name != e.Tag.Name);
+          if (streamStore.stream != null)
+            streamStore.stream.Tags = streamStore.stream.Tags.filter(
+              (tag) => tag !== e.Tag.Name
+            );
+          if (streamsStore.result != null)
+            streamsStore.result.Results = streamsStore.result.Results.map(
+              (result) => {
+                result.Tags = result.Tags.filter((tag) => tag !== e.Tag.Name);
+                return result;
+              }
+            );
           break;
         case "tagUpdated":
         case "tagEvaluated":
+          if (!isTagEvent(e)) {
+            console.error("Invalid tag event:", e);
+            return;
+          }
           if (store.tags != null)
             store.tags = store.tags.map((t) =>
-              t.Name == e.Tag!.Name ? e.Tag! : t
+              t.Name == e.Tag.Name ? e.Tag : t
             );
+          break;
+        case "converterAdded":
+          if (!isConverterEvent(e)) {
+            console.error("Invalid converter event:", e);
+            return;
+          }
+          if (
+            store.converters != null &&
+            !store.converters.find((c) => c.Name == e.Converter.Name)
+          )
+            store.converters.push(e.Converter);
+          break;
+        case "converterDeleted":
+          if (!isConverterEvent(e)) {
+            console.error("Invalid converter event:", e);
+            return;
+          }
+          if (store.converters != null)
+            store.converters = store.converters.filter(
+              (c) => c.Name != e.Converter.Name
+            );
+          break;
+        case "converterCompleted":
+        case "converterRestarted":
+          if (!isConverterEvent(e)) {
+            console.error("Invalid converter event:", e);
+            return;
+          }
+          if (store.converters != null) {
+            store.converters = store.converters.map((c) =>
+              c.Name == e.Converter.Name ? e.Converter : c
+            );
+          }
+          break;
+        case "pcapProcessed":
+          if (!isPcapProcessedEvent(e)) {
+            console.error("Invalid pcap processed event:", e);
+            return;
+          }
+          streamsStore.outdated = true;
+          if (store.status != null) {
+            store.status.PcapCount = e.PcapStats.PcapCount;
+            store.status.ImportJobCount = e.PcapStats.ImportJobCount;
+            store.status.StreamCount = e.PcapStats.StreamCount;
+            store.status.PacketCount = e.PcapStats.PacketCount;
+          }
           break;
         default:
           console.log(`Unhandled event type: ${e.Type}`);

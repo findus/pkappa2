@@ -1,12 +1,14 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,10 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
-	"golang.org/x/sys/unix"
-
 	"github.com/fsnotify/fsnotify"
 	"github.com/spq/pkappa2/internal/index"
 	"github.com/spq/pkappa2/internal/index/builder"
@@ -28,12 +26,27 @@ import (
 	"github.com/spq/pkappa2/internal/tools"
 	"github.com/spq/pkappa2/internal/tools/bitmask"
 	pcapmetadata "github.com/spq/pkappa2/internal/tools/pcapMetadata"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
+)
+
+const (
+	// Request timeout for webhooks
+	pcapProcessorWebhookTimeout = time.Second * 5
 )
 
 type (
+	PcapStatistics struct {
+		PcapCount      int
+		ImportJobCount int
+		StreamCount    int
+		PacketCount    int
+	}
 	Event struct {
-		Type string
-		Tag  *TagInfo
+		Type      string
+		Tag       *TagInfo               `json:",omitempty"`
+		Converter *converters.Statistics `json:",omitempty"`
+		PcapStats PcapStatistics         `json:",omitempty"`
 	}
 	listener struct {
 		close  chan struct{}
@@ -81,7 +94,8 @@ type (
 		updatedStreamsDuringTaggingJob bitmask.LongBitmask
 		addedStreamsDuringTaggingJob   bitmask.LongBitmask
 
-		streamsToConvert map[string]*bitmask.LongBitmask
+		streamsToConvert         map[string]*bitmask.LongBitmask
+		pcapProcessorWebhookUrls []string
 
 		tags       map[string]*tag
 		converters map[string]*converters.CachedConverter
@@ -116,7 +130,8 @@ type (
 			Color      string
 			Converters []string
 		}
-		Pcaps []*pcapmetadata.PcapInfo
+		Pcaps                    []*pcapmetadata.PcapInfo
+		PcapProcessorWebhookUrls []string
 	}
 
 	updateTagOperationInfo struct {
@@ -319,6 +334,7 @@ nextStateFile:
 			break
 		}
 		mgr.tags = newTags
+		mgr.pcapProcessorWebhookUrls = s.PcapProcessorWebhookUrls
 		mgr.stateFilename = fn
 		stateTimestamp = s.Saved
 		cachedKnownPcapData = s.Pcaps
@@ -392,8 +408,9 @@ func (mgr *Manager) Close() {
 
 func (mgr *Manager) saveState() error {
 	j := stateFile{
-		Saved: time.Now(),
-		Pcaps: mgr.builder.KnownPcaps(),
+		Saved:                    time.Now(),
+		Pcaps:                    mgr.builder.KnownPcaps(),
+		PcapProcessorWebhookUrls: mgr.pcapProcessorWebhookUrls,
 	}
 	for n, t := range mgr.tags {
 		j.Tags = append(j.Tags, struct {
@@ -548,7 +565,14 @@ func (mgr *Manager) importPcapJob(filenames []string, nextStreamID uint64, exist
 		}
 		mgr.event(Event{
 			Type: "pcapProcessed",
+			PcapStats: PcapStatistics{
+				PcapCount:      len(mgr.builder.KnownPcaps()),
+				ImportJobCount: len(mgr.importJobs),
+				StreamCount:    mgr.nStreams,
+				PacketCount:    mgr.nPackets,
+			},
 		})
+		mgr.triggerPcapProcessedWebhooks(filenames[:processedFiles])
 	}
 }
 
@@ -877,7 +901,7 @@ func (mgr *Manager) DelTag(name string) error {
 			// remove converter results of attached converters from cache
 			if len(tag.converters) > 0 {
 				for _, converter := range tag.converters {
-					if err := mgr.detachConverterFromTag(tag, converter); err != nil {
+					if err := mgr.detachConverterFromTag(tag, name, converter); err != nil {
 						return err
 					}
 				}
@@ -886,7 +910,8 @@ func (mgr *Manager) DelTag(name string) error {
 			mgr.event(Event{
 				Type: "tagDeleted",
 				Tag: &TagInfo{
-					Name: name,
+					Name:       name,
+					Converters: []string{},
 				},
 			})
 			for _, tn := range tag.referencedTags() {
@@ -977,7 +1002,7 @@ func (mgr *Manager) UpdateTag(name string, operation UpdateTagOperation) error {
 					if slices.Contains(info.setConverterNames, converter.Name()) {
 						continue
 					}
-					if err := mgr.detachConverterFromTag(tag, converter); err != nil {
+					if err := mgr.detachConverterFromTag(tag, name, converter); err != nil {
 						return fmt.Errorf("failed to detach converter %q from tag %q: %w", converter.Name(), name, err)
 					}
 				}
@@ -1262,14 +1287,15 @@ func (mgr *Manager) convertStreamJob(allConverters []*converters.CachedConverter
 				tag.Uncertain.Or(*allStreamIDs[i])
 			}
 			mgr.updatedStreamsDuringTaggingJob.Or(*allStreamIDs[i])
+			mgr.event(Event{
+				Type:      "converterCompleted",
+				Converter: converter.Statistics(),
+			})
 		}
 		mgr.inheritTagUncertainty()
 		mgr.startTaggingJobIfNeeded()
 		mgr.startConverterJobIfNeeded()
 		releaser.release(mgr)
-		mgr.event(Event{
-			Type: "converterCompleted",
-		})
 	}
 }
 
@@ -1309,8 +1335,13 @@ func (mgr *Manager) startMonitoringConverters(watcher *fsnotify.Watcher) {
 						if err := mgr.removeConverter(event.Name); err != nil {
 							log.Printf("error while removing converter: %v", err)
 						}
+						name := strings.TrimSuffix(filepath.Base(event.Name), filepath.Ext(event.Name))
 						mgr.event(Event{
 							Type: "converterDeleted",
+							Converter: &converters.Statistics{
+								Name:      name,
+								Processes: []converters.ProcessStats{},
+							},
 						})
 					}
 				}
@@ -1339,8 +1370,11 @@ func (mgr *Manager) startMonitoringConverters(watcher *fsnotify.Watcher) {
 								if err := mgr.addConverter(event.Name); err != nil {
 									log.Printf("error while adding converter: %v", err)
 								}
+								name := strings.TrimSuffix(filepath.Base(event.Name), filepath.Ext(event.Name))
+								converter := mgr.converters[name]
 								mgr.event(Event{
-									Type: "converterAdded",
+									Type:      "converterAdded",
+									Converter: converter.Statistics(),
 								})
 							}
 							if event.Has(fsnotify.Chmod) {
@@ -1384,8 +1418,7 @@ func (mgr *Manager) startMonitoringConverters(watcher *fsnotify.Watcher) {
 
 func (mgr *Manager) addConverter(path string) error {
 	// TODO: Do we want to check this now or when we start the converter?
-	err := unix.Access(path, unix.X_OK)
-	if err != nil {
+	if !tools.IsFileExecutable(path) {
 		return fmt.Errorf("error: converter %s is not executable", path)
 	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -1417,8 +1450,8 @@ func (mgr *Manager) removeConverter(path string) error {
 	}
 
 	// remove converter from all tags
-	for _, t := range mgr.tags {
-		if err := mgr.detachConverterFromTag(t, converter); err != nil {
+	for tagName, tag := range mgr.tags {
+		if err := mgr.detachConverterFromTag(tag, tagName, converter); err != nil {
 			return err
 		}
 	}
@@ -1441,6 +1474,10 @@ func (mgr *Manager) restartConverterProcess(path string) error {
 			return err
 		}
 		converter = mgr.converters[name]
+		mgr.event(Event{
+			Type:      "converterAdded",
+			Converter: converter.Statistics(),
+		})
 	}
 	// Stop the process if it is running and restart it
 	if err := converter.Reset(); err != nil {
@@ -1456,7 +1493,8 @@ func (mgr *Manager) restartConverterProcess(path string) error {
 	mgr.startConverterJobIfNeeded()
 
 	mgr.event(Event{
-		Type: "converterRestarted",
+		Type:      "converterRestarted",
+		Converter: converter.Statistics(),
 	})
 	return nil
 }
@@ -1476,16 +1514,24 @@ func (mgr *Manager) attachConverterToTag(tag *tag, tagName string, converter *co
 
 	tag.converters = append(tag.converters, converter)
 	mgr.streamsToConvert[converter.Name()].Or(tag.Matches)
+	mgr.event(Event{
+		Type: "tagUpdated",
+		Tag:  makeTagInfo(tagName, tag),
+	})
 	return nil
 }
 
-func (mgr *Manager) detachConverterFromTag(tag *tag, converter *converters.CachedConverter) error {
+func (mgr *Manager) detachConverterFromTag(tag *tag, tagName string, converter *converters.CachedConverter) error {
 	for i, c := range tag.converters {
 		if c == converter {
 			tag.converters = append(tag.converters[:i], tag.converters[i+1:]...)
 			break
 		}
 	}
+	mgr.event(Event{
+		Type: "tagUpdated",
+		Tag:  makeTagInfo(tagName, tag),
+	})
 	// delete/invalidate converter results for all matching streams now
 	// but only if they aren't matches of other tags the converter is attached to.
 	matchingStreams := bitmask.LongBitmask{}
@@ -1555,6 +1601,101 @@ func (mgr *Manager) ConverterStderr(converterName string, pid int) (*converters.
 		return nil, fmt.Errorf("error: converter %s or process with pid %d does not exist", converterName, pid)
 	}
 	return stderr, nil
+}
+
+func (mgr *Manager) ListPcapProcessorWebhooks() []string {
+	c := make(chan []string)
+	mgr.jobs <- func() {
+		if mgr.pcapProcessorWebhookUrls == nil {
+			c <- []string{}
+		} else {
+			c <- mgr.pcapProcessorWebhookUrls
+		}
+		close(c)
+	}
+	return <-c
+}
+
+func (mgr *Manager) AddPcapProcessorWebhook(url string) error {
+	c := make(chan error)
+	mgr.jobs <- func() {
+		for _, u := range mgr.pcapProcessorWebhookUrls {
+			if u == url {
+				c <- fmt.Errorf("error: url %q already exists", url)
+				close(c)
+				return
+			}
+		}
+		mgr.pcapProcessorWebhookUrls = append(mgr.pcapProcessorWebhookUrls, url)
+		c <- mgr.saveState()
+		close(c)
+	}
+	return <-c
+}
+
+func (mgr *Manager) DelPcapProcessorWebhook(url string) error {
+	c := make(chan error)
+	mgr.jobs <- func() {
+		for i, u := range mgr.pcapProcessorWebhookUrls {
+			if u == url {
+				mgr.pcapProcessorWebhookUrls = append(mgr.pcapProcessorWebhookUrls[:i], mgr.pcapProcessorWebhookUrls[i+1:]...)
+				c <- mgr.saveState()
+				close(c)
+				return
+			}
+		}
+		c <- fmt.Errorf("error: url %q does not exist", url)
+		close(c)
+	}
+	return <-c
+}
+
+func (mgr *Manager) triggerPcapProcessedWebhooks(filenames []string) {
+	var absFilenames []string
+	for _, filename := range filenames {
+		absFilename, err := filepath.Abs(filepath.Join(mgr.PcapDir, filename))
+		if err != nil {
+			log.Printf("error: pcap webhook failed to get absolute path of %q: %v\n", filename, err)
+			continue
+		}
+		absFilenames = append(absFilenames, absFilename)
+	}
+	jsonBody, err := json.Marshal(absFilenames)
+	if err != nil {
+		log.Printf("error: webhook body json encode failed: %v\n", err)
+		return
+	}
+	for _, webhookUrl := range mgr.pcapProcessorWebhookUrls {
+		go mgr.triggerPcapProcessedWebhook(webhookUrl, jsonBody)
+	}
+}
+
+func (mgr *Manager) triggerPcapProcessedWebhook(webhookUrl string, jsonBody []byte) {
+	err := func() error {
+		bodyReader := bytes.NewReader(jsonBody)
+
+		ctx, cncl := context.WithTimeout(context.Background(), pcapProcessorWebhookTimeout)
+		defer cncl()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookUrl, bodyReader)
+		if err != nil {
+			return fmt.Errorf("failed to create webhook request for processed pcap: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to making webhook request for processed pcap: %w", err)
+		}
+
+		if res.StatusCode != 200 {
+			return fmt.Errorf("webhook request for processed pcap failed: %q", res.Status)
+		}
+		return nil
+	}()
+	if err != nil {
+		log.Printf("webhook error: %v\n", err)
+	}
 }
 
 func (mgr *Manager) GetView() View {
@@ -1822,6 +1963,18 @@ func (c StreamContext) Data(converterName string) ([]index.Data, error) {
 		return nil, fmt.Errorf("invalid converter %q", converterName)
 	}
 	data, _, _, err := converter.Data(c.Stream(), true)
+	// TODO: only send event if the data wasn't cached before
+	if err == nil {
+		c.v.mgr.jobs <- func() {
+			converter, ok := c.v.mgr.converters[converterName]
+			if ok {
+				c.v.mgr.event(Event{
+					Type:      "converterCompleted",
+					Converter: converter.Statistics(),
+				})
+			}
+		}
+	}
 	return data, err
 }
 
