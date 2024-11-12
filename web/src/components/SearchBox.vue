@@ -192,19 +192,22 @@ EventBus.on("setSearchTerm", setSearchTerm);
 
 const reactiveStore = reactive(store);
 
-watch(
-  [route,searchBoxField,reactiveStore],
-  () => {
-    if (route && searchBoxField && reactiveStore.clientConfig && !route.query.q && store.clientConfig?.AutoInsertLimitToQuery) {
-      var input = searchBoxField.value?.$el.querySelector("input");
-      setSearchBox(" ltime:-1h:");
-      input?.focus();
-      setTimeout(()=>{
-        input?.setSelectionRange(0,0);
-      },0);
-    }
-  } 
-)
+watch([route, searchBoxField, reactiveStore], () => {
+  if (
+    route &&
+    searchBoxField &&
+    reactiveStore.clientConfig &&
+    !route.query.q &&
+    store.clientConfig?.AutoInsertLimitToQuery
+  ) {
+    var input = searchBoxField.value?.$el.querySelector("input");
+    setSearchBox(" ltime:-1h:");
+    input?.focus();
+    setTimeout(() => {
+      input?.setSelectionRange(0, 0);
+    }, 0);
+  }
+});
 
 watch(
   route,
