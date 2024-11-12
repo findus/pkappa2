@@ -140,6 +140,8 @@ type (
 		watcher     *fsnotify.Watcher
 
 		listeners map[chan Event]listener
+
+		clientConfig ClientConfig
 	}
 
 	Statistics struct {
@@ -210,7 +212,7 @@ type (
 	StreamsOption func(*streamsOptions)
 )
 
-func New(pcapDir, indexDir, snapshotDir, stateDir, converterDir string) (*Manager, error) {
+func New(pcapDir, indexDir, snapshotDir, stateDir, converterDir string, clientConfig ClientConfig) (*Manager, error) {
 	ctx := context.Background()
 	mgr := Manager{
 		PcapDir:      pcapDir,
@@ -225,6 +227,8 @@ func New(pcapDir, indexDir, snapshotDir, stateDir, converterDir string) (*Manage
 		streamsToConvert: make(map[string]*bitmask.LongBitmask),
 		jobs:             make(chan func()),
 		listeners:        make(map[chan Event]listener),
+
+		clientConfig: clientConfig,
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -833,7 +837,7 @@ func (mgr *Manager) ClientConfig() ClientConfig {
 			locks += n
 		}
 		c <- ClientConfig{
-			AutoInsertLimitToQuery: true,
+			AutoInsertLimitToQuery: mgr.clientConfig.AutoInsertLimitToQuery,
 		}
 		close(c)
 	}

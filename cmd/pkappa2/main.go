@@ -54,7 +54,8 @@ var (
 
 	listenAddress = flag.String("address", ":8080", "Listen address")
 
-	startupCpuprofile = flag.String("startup_cpuprofile", "", "write cpu profile to file")
+	startupCpuprofile      = flag.String("startup_cpuprofile", "", "write cpu profile to file")
+	autoInsertLimitToQuery = flag.Bool("auto_insert_limit_to_query", false, "Flag to tell pkappa frontend to auto insert limit to query")
 )
 
 func main() {
@@ -101,6 +102,7 @@ func main() {
 		filepath.Join(*baseDir, *snapshotDir),
 		filepath.Join(*baseDir, *stateDir),
 		*converterDir,
+		manager.ClientConfig{AutoInsertLimitToQuery: *autoInsertLimitToQuery},
 	)
 	if err != nil {
 		log.Fatalf("manager.New failed: %v", err)

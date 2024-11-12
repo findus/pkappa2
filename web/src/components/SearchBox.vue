@@ -196,7 +196,7 @@ const reactiveStore = reactive(store);
 watch(
   [route,searchBoxField,reactiveStore],
   () => {
-    if (route && searchBoxField && reactiveStore.clientConfig && !route.query.q) {
+    if (route && searchBoxField && reactiveStore.clientConfig && !route.query.q && store.clientConfig?.AutoInsertLimitToQuery) {
       var input = searchBoxField.value?.$el.querySelector("input");
       setSearchBox(" ltime:-1h:");
       input?.focus();
