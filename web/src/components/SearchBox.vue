@@ -106,11 +106,14 @@ import {
   onMounted,
   onBeforeUnmount,
   watch,
+  onBeforeMount,
+  reactive,
 } from "vue";
 import { useRoute, useRouter } from "vue-router/composables";
 import { useRootStore } from "@/stores";
 import { tagNameForURI } from "@/filters";
 import { VTextField } from "vuetify/lib";
+import { isClientConfig } from "@/apiClient.guard";
 
 const store = useRootStore();
 const route = useRoute();
@@ -188,10 +191,12 @@ const searchBoxFieldRect = computed(() => {
 
 EventBus.on("setSearchTerm", setSearchTerm);
 
+const reactiveStore = reactive(store);
+
 watch(
-  [route,searchBoxFieldRect],
+  [route,searchBoxField,reactiveStore],
   () => {
-    if (!route.query.q) {
+    if (route && searchBoxField && reactiveStore.clientConfig && !route.query.q) {
       var input = searchBoxField.value?.$el.querySelector("input");
       setSearchBox(" ltime:-1h:");
       input?.focus();
@@ -230,13 +235,16 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => {
+onBeforeMount(() => {
   store.getClientConfig().catch((err: string) => {
-    EventBus.emit("showError", `Failed to get clientconfig: ${err}`);
+    EventBus.emit("showError", `Failed to update converters: ${err}`);
   });
   store.updateConverters().catch((err: string) => {
     EventBus.emit("showError", `Failed to update converters: ${err}`);
   });
+});
+
+onMounted(() => {
   const keyListener = (e: KeyboardEvent) => {
     if (e.target === null || !(e.target instanceof Element)) return;
     if (["input", "textarea"].includes(e.target.tagName.toLowerCase())) return;
