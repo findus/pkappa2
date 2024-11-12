@@ -183,6 +183,13 @@ func main() {
 		http.Error(w, "OK", http.StatusOK)
 	})
 	rUser.Mount("/debug", middleware.Profiler())
+	rUser.Get("/api/clientconfig.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(mgr.ClientConfig()); err != nil {
+			http.Error(w, fmt.Sprintf("Encode failed: %v", err), http.StatusInternalServerError)
+		}
+	})
 	rUser.Get("/api/status.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 

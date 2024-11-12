@@ -156,6 +156,10 @@ type (
 		ConverterJobRunning bool
 	}
 
+	ClientConfig struct {
+		AutoPrependLimit bool
+	}
+
 	indexReleaser []*index.Reader
 
 	// TODO: Maybe save md5 of converters to detect changes
@@ -819,6 +823,16 @@ func (mgr *Manager) ImportPcaps(filenames []string) {
 func (mgr *Manager) getIndexesCopy(start int) ([]*index.Reader, indexReleaser) {
 	indexes := append([]*index.Reader(nil), mgr.indexes[start:]...)
 	return indexes, mgr.lock(indexes)
+}
+
+func (mgr *Manager) ClientConfig() ClientConfig {
+	c := make(chan ClientConfig)
+	c <- ClientConfig{
+		AutoPrependLimit: true,
+	}
+	close(c)
+	res := <-c
+	return res
 }
 
 func (mgr *Manager) Status() Statistics {
