@@ -193,7 +193,6 @@ watch(
   () => {
     var input = searchBoxField.value?.$el.querySelector("input");
       setSearchBox(" ltime:-1h:");
-      console.log(input);
       input?.focus();
       setTimeout(()=>{
         input?.setSelectionRange(0,0);
