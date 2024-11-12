@@ -828,7 +828,7 @@ func (mgr *Manager) getIndexesCopy(start int) ([]*index.Reader, indexReleaser) {
 func (mgr *Manager) ClientConfig() ClientConfig {
 	c := make(chan ClientConfig)
 	c <- ClientConfig{
-		AutoPrependLimit: true,
+		AutoInsertLimitToQuery: true,
 	}
 	close(c)
 	res := <-c
