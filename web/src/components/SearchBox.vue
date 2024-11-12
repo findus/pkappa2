@@ -231,6 +231,9 @@ watch(
 );
 
 onMounted(() => {
+  store.getClientConfig().catch((err: string) => {
+    EventBus.emit("showError", `Failed to get clientconfig: ${err}`);
+  });
   store.updateConverters().catch((err: string) => {
     EventBus.emit("showError", `Failed to update converters: ${err}`);
   });

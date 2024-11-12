@@ -14,10 +14,10 @@ import APIClient, {
 
 interface State {
   status: Statistics | null;
-  clientConfig: ClientConfig | null;
   pcaps: PcapInfo[] | null;
   tags: TagInfo[] | null;
   converters: ConverterStatistics[] | null;
+  clientConfig: ClientConfig | null;
   pcapOverIPEndpoints: PcapOverIPEndpoint[] | null;
 }
 
@@ -25,12 +25,12 @@ export const useRootStore = defineStore("root", {
   state: (): State => {
     setupWebsocket();
     return {
-      clientConfig: null,
       status: null,
       pcaps: null,
       tags: null,
       converters: null,
       pcapOverIPEndpoints: null,
+      clientConfig: null,
     };
   },
   getters: {
@@ -79,11 +79,6 @@ export const useRootStore = defineStore("root", {
         }
       }
     },
-    async updateClientConfig() {
-      return APIClient.getClientConfig()
-        .then((data) => (this.clientConfig = data))
-        .catch(handleAxiosDefaultError);
-    },
     async updateStatus() {
       return APIClient.getStatus()
         .then((data) => (this.status = data))
@@ -116,6 +111,11 @@ export const useRootStore = defineStore("root", {
     async updateConverters() {
       return APIClient.getConverters()
         .then((data) => (this.converters = data))
+        .catch(handleAxiosDefaultError);
+    },
+    async getClientConfig() {
+      return APIClient.getClientConfig()
+        .then((data) => (this.clientConfig = data))
         .catch(handleAxiosDefaultError);
     },
     async updatePcaps() {

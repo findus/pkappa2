@@ -827,10 +827,16 @@ func (mgr *Manager) getIndexesCopy(start int) ([]*index.Reader, indexReleaser) {
 
 func (mgr *Manager) ClientConfig() ClientConfig {
 	c := make(chan ClientConfig)
-	c <- ClientConfig{
-		AutoInsertLimitToQuery: true,
+	mgr.jobs <- func() {
+		locks := uint(0)
+		for _, n := range mgr.usedIndexes {
+			locks += n
+		}
+		c <- ClientConfig{
+			AutoInsertLimitToQuery: true,
+		}
+		close(c)
 	}
-	close(c)
 	res := <-c
 	return res
 }
