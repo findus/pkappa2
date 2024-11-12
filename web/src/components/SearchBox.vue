@@ -113,7 +113,6 @@ import { useRoute, useRouter } from "vue-router/composables";
 import { useRootStore } from "@/stores";
 import { tagNameForURI } from "@/filters";
 import { VTextField } from "vuetify/lib";
-import { isClientConfig } from "@/apiClient.guard";
 
 const store = useRootStore();
 const route = useRoute();
