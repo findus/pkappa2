@@ -157,7 +157,7 @@ type (
 	}
 
 	ClientConfig struct {
-		AutoPrependLimit bool
+		AutoInsertLimitToQuery bool
 	}
 
 	indexReleaser []*index.Reader
